@@ -1,0 +1,8 @@
+[Unit]
+Description=repo.bhpanel.net - pull the newest signed PHP repository snapshot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/bhpanel-repo/repo-sync.sh

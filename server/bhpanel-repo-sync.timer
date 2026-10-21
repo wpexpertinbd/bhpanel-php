@@ -1,0 +1,10 @@
+[Unit]
+Description=repo.bhpanel.net - check for a new snapshot every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

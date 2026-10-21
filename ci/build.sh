@@ -22,13 +22,19 @@ case "$NN" in 56|70|71|72|73) EL=8 ;; 74|80|81|82|83|84|85|86) EL=9 ;; *) echo "
 grep -q "release ${EL}\." /etc/redhat-release || { echo "php$NN builds on EL$EL; this is $(cat /etc/redhat-release)"; exit 1; }
 
 dl() { curl -4 -fsS -m 90 --retry 8 --retry-delay 10 --retry-all-errors -o "$1" "$2"; }
+# rpms.remirepo.net timed out too that day (remi-modular metadata): long
+# timeouts, many retries, and each dnf step tried three times.
+DNF=(dnf -y -q --setopt=retries=10 --setopt=timeout=120 --setopt=minrate=1)
+dnf_retry() { local i; for i in 1 2 3; do "${DNF[@]}" "$@" && return 0; echo "dnf $1 failed (try $i of 3)"; sleep 30; done; return 1; }
 
 echo "::group::build root (EL$EL)"
-dnf -y -q install dnf-plugins-core epel-release >/dev/null
+dnf_retry install dnf-plugins-core epel-release >/dev/null
 if [ "$EL" = 9 ]; then dnf config-manager --set-enabled crb; else dnf config-manager --set-enabled powertools; fi
 dl /tmp/remi-release.rpm "https://rpms.remirepo.net/enterprise/remi-release-$EL.rpm"
-dnf -y -q install /tmp/remi-release.rpm >/dev/null
-dnf -y -q install rpm-build scl-utils-build "php$NN-build" gnupg2 git >/dev/null
+dnf_retry install /tmp/remi-release.rpm >/dev/null
+# Only remi-safe (the -build macros) and remi (the build dependencies) are used.
+dnf config-manager --set-disabled remi-modular >/dev/null 2>&1 || true
+dnf_retry install rpm-build scl-utils-build "php$NN-build" gnupg2 git >/dev/null
 echo "::endgroup::"
 
 TOP="$(mktemp -d)"
@@ -90,7 +96,7 @@ dl "php-$UP.tar.xz.asc" "https://www.php.net/distributions/php-$UP.tar.xz.asc"
 echo "::endgroup::"
 
 echo "::group::build dependencies"
-dnf -y -q builddep --enablerepo=remi --define "scl php$NN" "$SPEC"
+dnf_retry builddep --enablerepo=remi --define "scl php$NN" "$SPEC"
 echo "::endgroup::"
 
 echo "::group::rpmbuild (tests skipped: --nocheck)"
