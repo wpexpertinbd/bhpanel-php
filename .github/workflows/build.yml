@@ -62,3 +62,39 @@ jobs:
           path: out/
           if-no-files-found: error
           retention-days: 1   # counts against the account's 500 MB until it expires; publish deletes it sooner
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    container: almalinux:9
+    # The signing key lives only here; GitHub waits for the owner's approval
+    # (and allows only the main branch) before this job may start.
+    environment: sign
+    permissions:
+      contents: write   # the "repo" release that repo.bhpanel.net pulls
+      actions: write    # delete this run's artifacts once published (500 MB)
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: php${{ inputs.version }}-*
+          path: new
+          merge-multiple: true
+      - name: Sign and publish
+        env:
+          RPM_SIGNING_KEY: ${{ secrets.RPM_SIGNING_KEY }}
+          RPM_SIGNING_FPR: ${{ secrets.RPM_SIGNING_FPR }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash ci/publish.sh new
+      - name: Delete this run's artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          api="https://api.github.com/repos/${{ github.repository }}/actions"
+          for id in $(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$api/runs/${{ github.run_id }}/artifacts" | jq -r '.artifacts[].id'); do
+            curl -fsS -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/artifacts/$id" && echo "deleted artifact $id"
+          done
