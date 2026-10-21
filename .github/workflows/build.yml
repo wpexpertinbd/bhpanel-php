@@ -61,4 +61,4 @@ jobs:
           name: php${{ inputs.version }}-el${{ needs.plan.outputs.el }}-${{ matrix.arch }}
           path: out/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1   # counts against the account's 500 MB until it expires; publish deletes it sooner

@@ -38,7 +38,7 @@ cd "$TOP/SOURCES"
 echo "::group::recipe scl-php$NN"
 G="https://git.remirepo.net/cgit/rpms/scl-php$NN/php.git"
 files=""
-for i in 1 2 3 4 5 6; do
+for _ in 1 2 3 4 5 6; do
   files=$(curl -4 -fsS -m 60 "$G/tree/" 2>/dev/null | grep -oE "href='/cgit/rpms/scl-php$NN/php.git/tree/[^']+'" | sed "s#.*/tree/##; s/'\$//") && [ -n "$files" ] && break
   sleep 15
 done
@@ -48,7 +48,7 @@ if [ -n "$files" ]; then
   for f in $files; do dl "$f" "$G/plain/$f" || { ok=0; break; }; done
 fi
 if [ "$ok" = 1 ]; then
-  echo "from $G ($(echo $files | wc -w) files)"
+  echo "from $G ($(echo "$files" | wc -w) files)"
 elif [ -s "$HERE/recipes/php$NN/php.spec" ]; then
   echo "git.remirepo.net did not answer - using the copy in recipes/php$NN"
   cp -f "$HERE/recipes/php$NN/"* .
@@ -99,7 +99,7 @@ echo "::endgroup::"
 
 mkdir -p "$OUT"
 find "$TOP/RPMS" -name '*.rpm' ! -name '*-debuginfo-*' ! -name '*-debugsource-*' -exec cp -f {} "$OUT/" \;
-n=$(ls "$OUT"/*.rpm | wc -l)
+n=$(find "$OUT" -maxdepth 1 -name "*.rpm" | wc -l)
 [ "$n" -gt 0 ] || { echo "no packages were built"; exit 1; }
 echo "built $n packages:"; ls "$OUT"
 rpm -qp --changelog "$OUT/php$NN-php-cli-"*.rpm | head -4
