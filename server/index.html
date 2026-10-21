@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BHPanel PHP Repository</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--text:#0f172a;--dim:#55627a;--line:#e3e8f2;--accent:#0d6efd;--code:#eef2f8;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1120;--card:#121a2c;--text:#e6ebf5;--dim:#9aa6bd;--line:#223049;--accent:#5b9bff;--code:#0b1324;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:40px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;min-width:0}
+h1{font-size:24px;margin:0 0 8px}
+h2{font-size:17px;margin:24px 0 8px}
+p{margin:0 0 12px;color:var(--dim)}
+code,pre{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto;margin:0 0 12px;color:var(--text)}
+a{color:var(--accent)}
+.fp{word-break:break-all}
+</style>
+</head>
+<body>
+<main>
+<div class="card">
+<h1>BHPanel PHP Repository</h1>
+<p>Signed PHP packages for servers running <a href="https://bhpanel.net">BHPanel</a>, built from Remi's recipes. BHPanel adds this repository by itself; there is nothing to set up by hand.</p>
+<h2>Signing key</h2>
+<p>Every package and every repository index is signed with this key. dnf refuses anything else.</p>
+<pre class="fp">0461 071E BB7D 7769 6E88  64C7 E8B1 1A3B A30F 6EC4</pre>
+<p><a href="RPM-GPG-KEY-bhpanel">RPM-GPG-KEY-bhpanel</a></p>
+<h2>Layout</h2>
+<pre>el9/x86_64/   el9/aarch64/   (PHP 7.4 and newer)
+el8/x86_64/   el8/aarch64/   (PHP 5.6 - 7.3)</pre>
+</div>
+</main>
+</body>
+</html>
