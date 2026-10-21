@@ -1,0 +1,64 @@
+name: build
+
+# Started by hand: "build php85". Builds both processors in clean AlmaLinux
+# containers and keeps the packages as an artifact. Signing and publishing to
+# repo.bhpanel.net happen only in the "publish" job, which runs in the
+# protected "sign" environment and waits for the owner's approval.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: PHP version (Remi's scl-phpNN)
+        required: true
+        type: choice
+        options: ["85", "84", "83", "82", "81", "80", "74", "73", "72", "71", "70", "56"]
+      publish:
+        description: Sign and publish to repo.bhpanel.net (needs approval)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-php${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      el: ${{ steps.p.outputs.el }}
+      arches: ${{ steps.p.outputs.arches }}
+    steps:
+      - id: p
+        env:
+          V: ${{ inputs.version }}
+        run: |
+          case "$V" in
+            56|70|71) echo "el=8" >> "$GITHUB_OUTPUT"; echo 'arches=["x86_64"]' >> "$GITHUB_OUTPUT" ;;  # Remi's EL8 aarch64 starts at 7.2
+            72|73)    echo "el=8" >> "$GITHUB_OUTPUT"; echo 'arches=["x86_64","aarch64"]' >> "$GITHUB_OUTPUT" ;;
+            *)        echo "el=9" >> "$GITHUB_OUTPUT"; echo 'arches=["x86_64","aarch64"]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.plan.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: almalinux:${{ needs.plan.outputs.el }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build php${{ inputs.version }} (${{ matrix.arch }})
+        run: bash ci/build.sh "${{ inputs.version }}" "out/el${{ needs.plan.outputs.el }}/${{ matrix.arch }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: php${{ inputs.version }}-el${{ needs.plan.outputs.el }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
