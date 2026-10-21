@@ -78,9 +78,10 @@ find "$W/x" -type d -exec chmod 0755 {} +
 find "$W/x" -type f -exec chmod 0644 {} +
 # Packages first, the indexes after them (--delay-updates puts everything in
 # place at the end), so a client never reads an index naming a missing file.
-# The site's own files stay: its page, its .htaccess and .well-known (where
-# the certificate's renewal is checked).
-rsync -a --delete --delay-updates --exclude=.htaccess --exclude=index.html --exclude=/.well-known "$W/x/" "$SITE/"
+# The site's own files stay: its page and icons, its .htaccess and
+# .well-known (where the certificate's renewal is checked).
+rsync -a --delete --delay-updates --exclude=.htaccess --exclude=index.html --exclude=/.well-known \
+  --exclude=/favicon.ico --exclude=/favicon.svg --exclude=/apple-touch-icon.png "$W/x/" "$SITE/"
 echo "$latest" > "$STATE/current.txt"
 echo "live: $name ($n indexes)"
 
