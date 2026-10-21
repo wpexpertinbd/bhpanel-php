@@ -17,6 +17,7 @@
 set -euo pipefail
 NN="${1:?php version, e.g. 85}"
 OUT="${2:?output directory}"
+mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"   # absolute: the build cds away (first run lost its packages)
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 case "$NN" in 56|70|71|72|73) EL=8 ;; 74|80|81|82|83|84|85|86) EL=9 ;; *) echo "unknown version $NN"; exit 1 ;; esac
 grep -q "release ${EL}\." /etc/redhat-release || { echo "php$NN builds on EL$EL; this is $(cat /etc/redhat-release)"; exit 1; }
