@@ -5,12 +5,14 @@
 # as its account. Nothing is pushed to this server: it only downloads.
 #
 # Before anything goes live: the snapshot's sha256 must match latest.txt, its
-# RPM-GPG-KEY-bhpanel must be the key with the PINNED fingerprint below, and
-# every repomd.xml must carry a valid signature by that key. Anything else is
-# refused and the site keeps serving what it had.
+# RPM-GPG-KEY-bhpanel must be the key with the PINNED fingerprint below, every
+# repomd.xml must carry a valid signature by that key, every package its own,
+# no file may be there that a signed index does not name, and the signed
+# revision may never go back. Anything else is refused and the site keeps
+# serving what it had.
 #
 # Every snapshot put live, and every one refused, is emailed to ALERT with the
-# packages it adds or removes - so a publish nobody made is seen at once.
+# files it adds or removes - so a publish nobody made is seen at once.
 # The address is not on GitHub: an account taken over there cannot silence it.
 set -euo pipefail
 FPR=0461071EBB7D77696E8864C7E8B11A3BA30F6EC4
@@ -50,26 +52,80 @@ echo "$sum  $W/$name" | sha256sum -c --quiet || refuse "the snapshot does not ma
 
 mkdir "$W/x"
 tar --zstd -xf "$W/$name" -C "$W/x" --no-same-owner --no-same-permissions || refuse "the snapshot could not be unpacked"
-# Nothing but the repository layout: the key, elN/ARCH/{Packages,repodata}.
-bad=$(cd "$W/x" && find . -mindepth 1 ! -path './RPM-GPG-KEY-bhpanel' ! -regex '\./el[0-9]+\(/[a-z0-9_]+\(/\(Packages\|repodata\)\(/[A-Za-z0-9._+~-]+\)?\)?\)?' | head -3)
-[ -z "$bad" ] || refuse "unexpected paths in the snapshot: $bad"
-find "$W/x" -type l | grep -q . && refuse "links in the snapshot"
+# No links, devices or FIFOs: plain files and folders only.
+odd=$(cd "$W/x" && find . -mindepth 1 ! -type f ! -type d | head -3)
+[ -z "$odd" ] || refuse "something that is not a plain file in the snapshot: $odd"
+bad=$(cd "$W/x" && find . -mindepth 1 -type d | { grep -Ev '^\./el[0-9]+(/(x86_64|aarch64)(/(Packages|repodata))?)?$' || true; } | head -3)
+[ -z "$bad" ] || refuse "unexpected folders in the snapshot: $bad"
 
 export GNUPGHOME="$W/g"; mkdir -m 700 "$GNUPGHOME"
 gpg --batch --quiet --import "$W/x/RPM-GPG-KEY-bhpanel" 2>/dev/null || refuse "the snapshot's key could not be read"
 got=$(gpg --list-keys --with-colons | awk -F: '/^fpr:/{print $10}' | tr '\n' ' ')
 [ "$got" = "$FPR " ] || refuse "the snapshot's key is not the pinned one ($got)"
+
+# Every index signed by the key; together they name the only repodata files
+# that may be there.
+allowed="$W/allowed"; echo ./RPM-GPG-KEY-bhpanel > "$allowed"
 n=0
 for m in "$W"/x/el*/*/repodata/repomd.xml; do
   [ -f "$m" ] || continue
   gpg --batch --quiet --verify "$m.asc" "$m" 2>/dev/null || refuse "bad index signature: ${m#"$W"/x/}"
+  d=".${m#"$W"/x}"; d=${d%/repodata/repomd.xml}
+  printf '%s\n' "$d/repodata/repomd.xml" "$d/repodata/repomd.xml.asc" >> "$allowed"
+  while IFS= read -r h; do
+    [[ "$h" =~ ^[A-Za-z0-9._-]+$ ]] || refuse "an index names an unexpected file: $h"
+    echo "$d/repodata/$h" >> "$allowed"
+  done < <(grep -oE 'href="repodata/[^"]*"' "$m" | sed 's#^href="repodata/##; s#"$##')
+  r=$({ grep -oE '<revision>[0-9]+</revision>' "$m" || true; } | { grep -oE '[0-9]+' || true; } | head -1)
+  [[ "$r" =~ ^[0-9]+$ ]] || refuse "an index without a revision: ${m#"$W"/x/}"
+  # Never back, per index: one architecture's older index must not slip in
+  # under another's newer one (Codex, 2026-10-22).
+  was=$({ awk -v k="$d" '$1 == k { print $2 }' "$STATE/revisions" 2>/dev/null || true; } | head -1)
+  [[ "$was" =~ ^[0-9]+$ ]] || was=0
+  [ "$r" -ge "$was" ] || refuse "${d#./}: its index is older than the live one (revision $r, live $was)"
+  echo "$d $r" >> "$W/revisions"
+  # The packages the index names: primary.xml, checked against the checksum
+  # the signed repomd.xml gives it. Only these may be there (Codex: a signed
+  # package no index names must not be published either).
+  read -r psum phref < <(awk '/<data type="primary">/ { f = 1 }
+    f && /<checksum type="sha256">/ { match($0, />[0-9a-f]{64}</); c = substr($0, RSTART + 1, 64) }
+    f && /<location href=/ { match($0, /href="[^"]*"/); h = substr($0, RSTART + 6, RLENGTH - 7) }
+    f && /<\/data>/ { print c, h; exit }' "$m") || true
+  [[ "${psum:-}" =~ ^[0-9a-f]{64}$ && "${phref:-}" =~ ^repodata/[A-Za-z0-9._-]+$ ]] || refuse "${d#./}: its index names no package list"
+  echo "$psum  $W/x/$d/$phref" | sha256sum -c --quiet >/dev/null 2>&1 || refuse "${d#./}: its package list does not match the signed index"
+  case "$phref" in
+    *.gz) cat_p=(gzip -dc) ;; *.zst) cat_p=(zstd -dcq) ;; *.xz) cat_p=(xz -dc) ;; *.bz2) cat_p=(bzip2 -dc) ;; *) cat_p=(cat) ;;
+  esac
+  while IFS= read -r ph; do
+    [[ "$ph" =~ ^Packages/[A-Za-z0-9._+~-]+\.rpm$ ]] || refuse "${d#./}: its package list names an unexpected file: $ph"
+    echo "$d/$ph" >> "$allowed"
+  done < <("${cat_p[@]}" "$W/x/$d/$phref" | { grep -oE '<location href="[^"]*"' || true; } | sed 's#^<location href="##; s#"$##')
   n=$((n + 1))
 done
 [ "$n" -gt 0 ] || refuse "no repository index in the snapshot"
 gpgconf --kill gpg-agent >/dev/null 2>&1 || true
 
-# What changes, for the alert: package files added and removed.
-list() { (cd "$1" 2>/dev/null && find . -path '*/Packages/*.rpm' | sed 's#^\./##' | sort) || true; }
+# Nothing else: a file no signed index names (a .php, a page) never goes live
+# (2026-10-22 audit) - packages aside, each of which must carry the key's
+# signature itself.
+mkdir "$W/rpmdb"
+rpmkeys --dbpath "$W/rpmdb" --import "$W/x/RPM-GPG-KEY-bhpanel" || refuse "the key could not be imported for the package check"
+while IFS= read -r f; do
+  if [[ "$f" =~ ^\./el[0-9]+/(x86_64|aarch64)/Packages/[A-Za-z0-9._+~-]+\.rpm$ ]]; then
+    grep -qxF -- "$f" "$allowed" || refuse "a package its signed index does not name: $f"
+    out=$(rpmkeys --dbpath "$W/rpmdb" --checksig "$W/x/$f" 2>&1) || true
+    case "$out" in *"digests signatures OK"*) ;; *) refuse "a package without a valid signature: $f";; esac
+  elif ! grep -qxF -- "$f" "$allowed"; then
+    refuse "a file no signed index names: $f"
+  fi
+done < <(cd "$W/x" && find . -type f | sort)
+
+# Never back to an older repository: each index's signed revision only goes up
+# (checked per index above), so a snapshot from before a security rebuild
+# cannot be published again.
+
+# What changes, for the alert: EVERY file added and removed.
+list() { (cd "$1" 2>/dev/null && find . -type f \( -path './el*' -o -name RPM-GPG-KEY-bhpanel \) | sed 's#^\./##' | sort) || true; }
 added=$(comm -13 <(list "$SITE") <(list "$W/x"))
 removed=$(comm -23 <(list "$SITE") <(list "$W/x"))
 
@@ -83,6 +139,9 @@ find "$W/x" -type f -exec chmod 0644 {} +
 rsync -a --delete --delay-updates --exclude=.htaccess --exclude=index.html --exclude=/.well-known \
   --exclude=/favicon.ico --exclude=/favicon.svg --exclude=/apple-touch-icon.png "$W/x/" "$SITE/"
 echo "$latest" > "$STATE/current.txt"
+# Indexes this snapshot does not carry keep their last revision.
+{ cat "$W/revisions"; awk 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$W/revisions" "$STATE/revisions" 2>/dev/null || true; } > "$W/revisions.new"
+mv -f "$W/revisions.new" "$STATE/revisions"
 echo "live: $name ($n indexes)"
 
 {

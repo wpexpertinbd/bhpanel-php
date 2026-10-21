@@ -44,7 +44,14 @@ if [ -n "$latest" ]; then
   name=${latest%% *}; sum=${latest##* }
   curl -fsSL -o "$W/$name" "https://github.com/$REPO_GH/releases/download/$TAG/$name"
   echo "$sum  $W/$name" | sha256sum -c --quiet
-  tar --zstd -xf "$W/$name" -C "$R"
+  tar --zstd -xf "$W/$name" -C "$R" --no-same-owner --no-same-permissions
+  # Nothing is carried forward that a repository does not hold: a file planted
+  # in the live snapshot must not ride along into every later publish
+  # (2026-10-22 audit). repo-sync.sh checks the same on the server.
+  odd=$(cd "$R" && find . -mindepth 1 \( ! -type f ! -type d \) -o \( -type f ! -path ./RPM-GPG-KEY-bhpanel \
+        ! -regex '\./el[0-9]+/\(x86_64\|aarch64\)/Packages/[A-Za-z0-9._+~-]+\.rpm' \
+        ! -regex '\./el[0-9]+/\(x86_64\|aarch64\)/repodata/[A-Za-z0-9._-]+' \) | head -3)
+  [ -z "$odd" ] || { echo "the current snapshot holds something a repository does not: $odd"; exit 1; }
   echo "starting from $name"
 else
   echo "no repository yet - starting empty"
