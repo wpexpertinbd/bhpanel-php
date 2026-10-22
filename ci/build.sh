@@ -22,7 +22,10 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 case "$NN" in 56|70|71|72|73) EL=8 ;; 74|80|81|82|83|84|85|86) EL=9 ;; *) echo "unknown version $NN"; exit 1 ;; esac
 grep -q "release ${EL}\." /etc/redhat-release || { echo "php$NN builds on EL$EL; this is $(cat /etc/redhat-release)"; exit 1; }
 
-dl() { curl -4 -fsS -m 90 --retry 8 --retry-delay 10 --retry-all-errors -o "$1" "$2"; }
+# --retry-all-errors is newer than EL8's curl (7.61): used only where it exists.
+RETRY_ALL=()
+curl --help all 2>/dev/null | grep -q -- '--retry-all-errors' && RETRY_ALL=(--retry-all-errors)
+dl() { curl -4 -fsS -m 90 --retry 8 --retry-delay 10 "${RETRY_ALL[@]}" -o "$1" "$2"; }
 # rpms.remirepo.net timed out too that day (remi-modular metadata): long
 # timeouts, many retries, and each dnf step tried three times.
 DNF=(dnf -y -q --setopt=retries=10 --setopt=timeout=120 --setopt=minrate=1)
