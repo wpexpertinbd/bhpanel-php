@@ -89,6 +89,14 @@ elif compgen -G "$HERE/patches/php$NN/*.patch" >/dev/null; then
   done
   sed -i 's|^Release: \([0-9]*\)%{?dist}$|Release: \1.bhp1%{?dist}|' "$SPEC"
   grep -qE '^Release: [0-9]+\.bhp1' "$SPEC" || { echo "could not mark the release as ours"; exit 1; }
+  # The changelog names what our patches fix: the panel reads it to tell a
+  # fixed build from an unfixed one (bhpanel daemon/php_advisory.go). Each patch
+  # says so in a "# CVE-..." line at its top.
+  cves=$(cat "$HERE/patches/php$NN/"*.patch | { grep -oE '^# .*' || true; } | { grep -oE 'CVE-[0-9]{4}-[0-9]+' || true; } | sort -u | paste -sd, - | sed 's/,/, /g')
+  [ -n "$cves" ] || { echo "our patches for php$NN name no CVE in a '# CVE-...' line"; exit 1; }
+  rel=$(sed -n 's/^Release: \([0-9]*\.bhp1\)%{?dist}$/\1/p' "$SPEC")
+  sed -i "/^%changelog/a * $(LC_ALL=C date -u '+%a %b %d %Y') BHPanel <packages@bhpanel.net> - ${UP}-${rel}\\n- BHPanel backport: ${cves}\\n" "$SPEC"
+  sed -n '/^%changelog/,+3p' "$SPEC"
 else
   echo "no patch of ours for php$NN"
 fi
