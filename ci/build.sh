@@ -9,7 +9,8 @@
 #    retried, and recipes/phpNN/ in this repository is the fallback copy;
 #  - a recipe that already carries the fix is built UNCHANGED; our patch from
 #    patches/phpNN/ goes in only when it does not, after Remi's last patch, with
-#    release N.bhp1 - below his next N+1, so his package replaces ours;
+#    release N.1.bhp1 - above his unfixed N, below his next N+1, so his fixed
+#    package replaces ours;
 #  - patches touching zend_vm_def.h made make regenerate the VM with whatever
 #    php was on the build machine and write a broken header: the VM files the
 #    patches regenerated are marked up to date after the last patch;
@@ -87,14 +88,18 @@ elif compgen -G "$HERE/patches/php$NN/*.patch" >/dev/null; then
     sed -i "${last}a %patch -P${n} -p1 -b .bhp${n}" "$SPEC"; last=$((last + 1))
     echo "added Patch${n}: ${b}"; n=$((n + 1))
   done
-  sed -i 's|^Release: \([0-9]*\)%{?dist}$|Release: \1.bhp1%{?dist}|' "$SPEC"
-  grep -qE '^Release: [0-9]+\.bhp1' "$SPEC" || { echo "could not mark the release as ours"; exit 1; }
+  # N.1.bhp1: rpm ranks it ABOVE Remi's unfixed N (a numeric piece beats his
+  # "el8"/".remi") and below his next N+1, which replaces it. Plain N.bhp1
+  # ranked below his N, so dnf kept installing the unfixed build (proven with
+  # rpm.labelCompare, 2026-10-22).
+  sed -i 's|^Release: \([0-9]*\)%{?dist}$|Release: \1.1.bhp1%{?dist}|' "$SPEC"
+  grep -qE '^Release: [0-9]+\.1\.bhp1' "$SPEC" || { echo "could not mark the release as ours"; exit 1; }
   # The changelog names what our patches fix: the panel reads it to tell a
   # fixed build from an unfixed one (bhpanel daemon/php_advisory.go). Each patch
   # says so in a "# CVE-..." line at its top.
   cves=$(cat "$HERE/patches/php$NN/"*.patch | { grep -oE '^# .*' || true; } | { grep -oE 'CVE-[0-9]{4}-[0-9]+' || true; } | sort -u | paste -sd, - | sed 's/,/, /g')
   [ -n "$cves" ] || { echo "our patches for php$NN name no CVE in a '# CVE-...' line"; exit 1; }
-  rel=$(sed -n 's/^Release: \([0-9]*\.bhp1\)%{?dist}$/\1/p' "$SPEC")
+  rel=$(sed -n 's/^Release: \([0-9]*\.1\.bhp1\)%{?dist}$/\1/p' "$SPEC")
   sed -i "/^%changelog/a * $(LC_ALL=C date -u '+%a %b %d %Y') BHPanel <packages@bhpanel.net> - ${UP}-${rel}\\n- BHPanel backport: ${cves}\\n" "$SPEC"
   sed -n '/^%changelog/,+3p' "$SPEC"
 else
