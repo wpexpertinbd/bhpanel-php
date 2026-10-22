@@ -67,7 +67,10 @@ else
 fi
 mv -f php.spec "$TOP/SPECS/php.spec"
 SPEC="$TOP/SPECS/php.spec"
-UP=$(grep -m1 -E '^%global upver' "$SPEC" | awk '{print $3}')
+# Newer recipes name the version in %global upver; 5.6's only in Version:.
+UP=$({ grep -m1 -E '^%global upver' "$SPEC" || true; } | awk '{print $3}')
+[ -n "$UP" ] || UP=$({ grep -m1 -E '^Version:' "$SPEC" || true; } | awk '{print $2}')
+[[ "$UP" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "cannot tell the PHP version from the recipe ($UP)"; exit 1; }
 echo "recipe for PHP $UP, $(grep -m1 '^Release:' "$SPEC")"
 echo "::endgroup::"
 
