@@ -97,10 +97,30 @@ ln=$(grep -nE '^%patch -P[0-9]+ ' "$SPEC" | tail -1 | cut -d: -f1)
 grep -nE '^Release:|^Patch9[0-9][0-9]:|^touch Zend' "$SPEC" || true
 echo "::endgroup::"
 
-echo "::group::php.net tarball + signature (checked by the recipe)"
-dl "php-$UP.tar.xz" "https://www.php.net/distributions/php-$UP.tar.xz"
-dl "php-$UP.tar.xz.asc" "https://www.php.net/distributions/php-$UP.tar.xz.asc"
-echo "::endgroup::"
+if grep -qE '^Source0: *php-%\{version\}(%\{\?rcver\})?-strip\.tar\.xz' "$SPEC"; then
+  # 5.6: the recipe builds from a "-strip" tarball - php.net's with ext/json
+  # removed by the recipe's own strip.sh - and checks no signature itself. So
+  # php.net's tarball is held to the sha256 php.net publishes for it (pinned
+  # here, from php.net/releases), and only then stripped.
+  echo "::group::php.net tarball (pinned sha256) + the recipe's strip.sh"
+  case "$UP" in
+    5.6.40) want=1369a51eee3995d7fbd1c5342e5cc917760e276d561595b6052b21ace2656d1c ;;
+    *) echo "no pinned checksum for php-$UP.tar.xz - add php.net's sha256 here first"; exit 1 ;;
+  esac
+  dl "php-$UP.tar.xz" "https://www.php.net/distributions/php-$UP.tar.xz"
+  echo "$want  php-$UP.tar.xz" | sha256sum -c --quiet || { echo "php-$UP.tar.xz does not match php.net's checksum"; exit 1; }
+  [ -s strip.sh ] || { echo "the recipe has no strip.sh"; exit 1; }
+  bash strip.sh "$UP" >/dev/null
+  [ -s "php-$UP-strip.tar.xz" ] || { echo "strip.sh made no php-$UP-strip.tar.xz"; exit 1; }
+  rm -rf "php-$UP"
+  echo "made php-$UP-strip.tar.xz"
+  echo "::endgroup::"
+else
+  echo "::group::php.net tarball + signature (checked by the recipe)"
+  dl "php-$UP.tar.xz" "https://www.php.net/distributions/php-$UP.tar.xz"
+  dl "php-$UP.tar.xz.asc" "https://www.php.net/distributions/php-$UP.tar.xz.asc"
+  echo "::endgroup::"
+fi
 
 echo "::group::build dependencies"
 dnf_retry builddep --enablerepo=remi --define "scl php$NN" "$SPEC"
