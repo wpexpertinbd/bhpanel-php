@@ -17,7 +17,6 @@
 set -euo pipefail
 FPR=0461071EBB7D77696E8864C7E8B11A3BA30F6EC4
 REL="https://github.com/wpexpertinbd/bhpanel-php/releases/download/repo"
-ACCT=bhpmain
 SITE=/home/bhpmain/repo.bhpanel.net
 STATE=/root/bhpanel-repo
 ALERT=info@biswashost.com
@@ -129,15 +128,48 @@ list() { (cd "$1" 2>/dev/null && find . -type f \( -path './el*' -o -name RPM-GP
 added=$(comm -13 <(list "$SITE") <(list "$W/x"))
 removed=$(comm -23 <(list "$SITE") <(list "$W/x"))
 
-chown -R "$ACCT:$ACCT" "$W/x"
+# ⚠ Root's, never the site account's (2026-10-22): the account runs the
+# bhpanel.net website, and a hole in it must not reach what servers install.
+# The site's own folder is IMMUTABLE (chattr +i), so the account cannot swap
+# it for another or a link either - and this script never unlocks it: the
+# account owns its parent, and could swap the folder in that moment (Codex).
+# A snapshot that needs a new top-level entry (a new index folder, a new key)
+# is refused with what to do by hand.
+chown -R root:root "$W/x"
 find "$W/x" -type d -exec chmod 0755 {} +
 find "$W/x" -type f -exec chmod 0644 {} +
+top_change() { # a change to the locked folder's top level: by hand only
+  refuse "it needs a change at the top of the locked $SITE - by hand: chattr -i $SITE; $*; chattr +i $SITE"
+}
+[ ! -L "$SITE" ] && [ -d "$SITE" ] && [ "$(stat -c %u "$SITE")" = 0 ] || refuse "$SITE is not root's own folder"
 # Packages first, the indexes after them (--delay-updates puts everything in
-# place at the end), so a client never reads an index naming a missing file.
-# The site's own files stay: its page and icons, its .htaccess and
-# .well-known (where the certificate's renewal is checked).
-rsync -a --delete --delay-updates --exclude=.htaccess --exclude=index.html --exclude=/.well-known \
-  --exclude=/favicon.ico --exclude=/favicon.svg --exclude=/apple-touch-icon.png "$W/x/" "$SITE/"
+# place at the end), so a client never reads an index naming a missing file -
+# folder by folder: an index only ever names packages beside it. Old packages
+# go only in a second pass, once the indexes that stop naming them are live:
+# a server mid-download on the old index still finds its files (Codex).
+# Anything the locked top level would need is refused BEFORE a file moves.
+for d in "$W"/x/el*/; do
+  [ -d "$d" ] || continue
+  d=$(basename "$d")
+  [ -d "$SITE/$d" ] || top_change "make $SITE/$d (root, 0755)"
+done
+for d in "$SITE"/el*/; do
+  [ -d "$d" ] || continue
+  d=$(basename "$d")
+  [ -d "$W/x/$d" ] || top_change "remove $SITE/$d (the snapshot no longer has it)"
+done
+cmp -s "$W/x/RPM-GPG-KEY-bhpanel" "$SITE/RPM-GPG-KEY-bhpanel" ||
+  top_change "replace $SITE/RPM-GPG-KEY-bhpanel with the snapshot's (a NEW KEY - check it is yours)"
+for d in "$W"/x/el*/; do
+  [ -d "$d" ] || continue
+  d=$(basename "$d")
+  rsync -a --delay-updates "$W/x/$d/" "$SITE/$d/"
+done
+for d in "$W"/x/el*/; do
+  [ -d "$d" ] || continue
+  d=$(basename "$d")
+  rsync -a --delete "$W/x/$d/" "$SITE/$d/"
+done
 echo "$latest" > "$STATE/current.txt"
 # Indexes this snapshot does not carry keep their last revision.
 { cat "$W/revisions"; awk 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$W/revisions" "$STATE/revisions" 2>/dev/null || true; } > "$W/revisions.new"
