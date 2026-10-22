@@ -1,17 +1,17 @@
 name: build
 
-# Started by hand: "build php85". Builds both processors in clean AlmaLinux
-# containers and keeps the packages as an artifact. Signing and publishing to
-# repo.bhpanel.net happen only in the "publish" job, which runs in the
-# protected "sign" environment and waits for the owner's approval.
+# Started by hand: "build php85", or several at once: "84,83,82". Builds every
+# version on both processors in parallel, in clean AlmaLinux containers, and
+# keeps the packages as artifacts. Signing and publishing to repo.bhpanel.net
+# happen only in the "publish" job - ONE for the whole run, so several versions
+# need one approval - which runs in the protected "sign" environment.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: PHP version (Remi's scl-phpNN)
+        description: "PHP version(s), Remi's scl-phpNN: 85, or a list like 84,83,82"
         required: true
-        type: choice
-        options: ["85", "84", "83", "82", "81", "80", "74", "73", "72", "71", "70", "56"]
+        type: string
       publish:
         description: Sign and publish to repo.bhpanel.net (needs approval)
         type: boolean
@@ -21,51 +21,63 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-php${{ inputs.version }}
+  group: build-php-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
   plan:
     runs-on: ubuntu-24.04
     outputs:
-      el: ${{ steps.p.outputs.el }}
-      arches: ${{ steps.p.outputs.arches }}
+      matrix: ${{ steps.p.outputs.matrix }}
     steps:
       - id: p
         env:
           V: ${{ inputs.version }}
         run: |
-          case "$V" in
-            56|70|71) echo "el=8" >> "$GITHUB_OUTPUT"; echo 'arches=["x86_64"]' >> "$GITHUB_OUTPUT" ;;  # Remi's EL8 aarch64 starts at 7.2
-            72|73)    echo "el=8" >> "$GITHUB_OUTPUT"; echo 'arches=["x86_64","aarch64"]' >> "$GITHUB_OUTPUT" ;;
-            *)        echo "el=9" >> "$GITHUB_OUTPUT"; echo 'arches=["x86_64","aarch64"]' >> "$GITHUB_OUTPUT" ;;
-          esac
+          # Each entry checked against the known versions; nothing else from
+          # the input reaches a shell or the matrix.
+          out=""
+          for v in $(printf '%s' "$V" | tr ',' ' '); do
+            case "$v" in
+              56|70|71) el=8; arches="x86_64" ;;          # Remi's EL8 aarch64 starts at 7.2
+              72|73)    el=8; arches="x86_64 aarch64" ;;
+              74|80|81|82|83|84|85|86) el=9; arches="x86_64 aarch64" ;;
+              *) echo "unknown version: $v"; exit 1 ;;
+            esac
+            for a in $arches; do out="$out{\"v\":\"$v\",\"el\":\"$el\",\"arch\":\"$a\"},"; done
+          done
+          [ -n "$out" ] || { echo "no version given"; exit 1; }
+          echo "matrix={\"include\":[${out%,}]}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        arch: ${{ fromJSON(needs.plan.outputs.arches) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    container: almalinux:${{ needs.plan.outputs.el }}
+    container: almalinux:${{ matrix.el }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build php${{ inputs.version }} (${{ matrix.arch }})
-        run: bash ci/build.sh "${{ inputs.version }}" "out/el${{ needs.plan.outputs.el }}/${{ matrix.arch }}"
+      - name: Build php${{ matrix.v }} (${{ matrix.arch }})
+        run: bash ci/build.sh "${{ matrix.v }}" "out/el${{ matrix.el }}/${{ matrix.arch }}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: php${{ inputs.version }}-el${{ needs.plan.outputs.el }}-${{ matrix.arch }}
+          name: php${{ matrix.v }}-el${{ matrix.el }}-${{ matrix.arch }}
           path: out/
           if-no-files-found: error
           retention-days: 1   # counts against the account's 500 MB until it expires; publish deletes it sooner
-
   publish:
+    # Only when EVERY build succeeded: a half set is not published.
     if: ${{ inputs.publish }}
     needs: [plan, build]
+    # One publish at a time across all runs: each starts from the live
+    # snapshot, so two at once would drop each other's packages.
+    concurrency:
+      group: repo-publish
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     container: almalinux:9
     # The signing key lives only here; GitHub waits for the owner's approval
@@ -81,7 +93,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: php${{ inputs.version }}-*
+          pattern: php*-el*
           path: new
           merge-multiple: true
       - name: Sign and publish
